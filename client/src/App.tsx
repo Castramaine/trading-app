@@ -16,6 +16,12 @@ type Market = {
 
 type OrderType = 'Buy' | 'Sell';
 
+type MarketApiResponse = {
+  mode: 'mock' | 'live';
+  provider: string;
+  markets: Market[];
+};
+
 const defaultOrder = {
   symbol: 'NAS100',
   side: 'Buy' as OrderType,
@@ -37,11 +43,14 @@ function App() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [order, setOrder] = useState(defaultOrder);
   const [selectedSymbol, setSelectedSymbol] = useState('NAS100');
+  const [dataMode, setDataMode] = useState<'mock' | 'live'>('mock');
+  const [orderStatus, setOrderStatus] = useState('');
 
   useEffect(() => {
     fetch('/api/markets')
       .then((response) => response.json())
-      .then((data) => {
+      .then((data: MarketApiResponse) => {
+        setDataMode(data.mode);
         setMarkets(data.markets);
         setOrder((prev) => ({ ...prev, price: data.markets.find((m: Market) => m.symbol === prev.symbol)?.price ?? prev.price }));
       })
@@ -49,13 +58,12 @@ function App() {
 
     const stream = new EventSource('/api/stream');
     stream.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      const data: MarketApiResponse = JSON.parse(event.data);
+      setDataMode(data.mode);
       setMarkets(data.markets);
       setOrder((prev) => ({ ...prev, price: data.markets.find((m: Market) => m.symbol === prev.symbol)?.price ?? prev.price }));
     };
-    stream.onerror = () => {
-      console.warn('Stream disconnected. Reconnect will retry automatically.');
-    };
+    stream.onerror = () => console.warn('Stream disconnected. Reconnect will retry automatically.');
 
     return () => stream.close();
   }, []);
@@ -71,7 +79,6 @@ function App() {
       { symbol: 'EURUSD', pnl: 84.8 },
       { symbol: 'GBPJPY', pnl: -12.3 }
     ];
-
     return positions.reduce((sum, item) => sum + item.pnl, 0);
   }, []);
 
@@ -91,6 +98,24 @@ function App() {
       })
       .join(' ');
   }, [selectedMarket]);
+
+  const submitOrder = async () => {
+    setOrderStatus('Submitting order...');
+    const response = await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: order.symbol,
+        side: order.side,
+        quantity: order.quantity,
+        orderType: 'LIMIT',
+        price: order.price
+      })
+    });
+
+    const result = await response.json();
+    setOrderStatus(result?.order?.note || `Order ${result?.order?.orderId ?? ''} queued`);
+  };
 
   return (
     <div className="app-shell">
@@ -124,6 +149,9 @@ function App() {
             <h2>NASDAQ & FX Live Feed</h2>
           </div>
           <div className="topbar-actions">
+            <span className={`status-pill ${dataMode === 'live' ? 'live' : 'mock'}`}>
+              {dataMode === 'live' ? 'LIVE FEED' : 'SIMULATED'}
+            </span>
             <button className="ghost-button">Export</button>
             <button className="primary-button">New Trade</button>
           </div>
@@ -264,9 +292,10 @@ function App() {
             </div>
 
             <div className="order-actions">
-              <button className="primary-button">{order.side} {order.symbol}</button>
+              <button className="primary-button" onClick={submitOrder}>{order.side} {order.symbol}</button>
               <button className="ghost-button">Cancel</button>
             </div>
+            {orderStatus ? <div className="order-status">{orderStatus}</div> : null}
           </div>
         </section>
 
